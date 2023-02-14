@@ -11,4 +11,4 @@ app = FastAPI()
 async def root(request: Request):
   json = await request.json()
 
-  return summarizer(json["text"])
+  return summarizer(json["text"], truncation=True)
