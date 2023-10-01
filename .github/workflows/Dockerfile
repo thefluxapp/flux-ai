@@ -10,3 +10,7 @@ RUN pip3 install --upgrade pip
 RUN pip3 install fastapi uvicorn
 RUN pip3 install torch --extra-index-url https://download.pytorch.org/whl/cpu
 RUN pip3 install transformers
+
+WORKDIR /app
+COPY main.py .
+
