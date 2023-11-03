@@ -1,11 +1,10 @@
-use std::error::Error;
+use std::{cell::RefCell, error::Error};
 
 use candle_core::{safetensors, DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::{generation::LogitsProcessor, models};
 use hf_hub::api::sync::Api;
 use tokenizers::Tokenizer;
-use tokio::sync::RwLock;
 
 const DTYPE: DType = DType::F32;
 
@@ -13,7 +12,7 @@ pub struct Candle {
     device: Device,
     config: models::t5::Config,
     tokenizer: Tokenizer,
-    model: RwLock<models::t5::T5ForConditionalGeneration>,
+    model: RefCell<models::t5::T5ForConditionalGeneration>,
 }
 
 impl Candle {
@@ -29,7 +28,8 @@ impl Candle {
 
         let weights = safetensors::load(repo.get("model.safetensors").unwrap(), &device).unwrap();
         let vb: VarBuilder = VarBuilder::from_tensors(weights, DTYPE, &device);
-        let model = RwLock::new(models::t5::T5ForConditionalGeneration::load(vb, &config).unwrap());
+        let mut model =
+            RefCell::new(models::t5::T5ForConditionalGeneration::load(vb, &config).unwrap());
 
         Self {
             device,
@@ -39,7 +39,7 @@ impl Candle {
         }
     }
 
-    pub fn call(&mut self, prompt: String) -> Result<String, Box<dyn Error>> {
+    pub fn call(self, prompt: String) -> Result<String, Box<dyn Error>> {
         let tokens = self
             .tokenizer
             .encode(prompt, true)
@@ -51,7 +51,7 @@ impl Candle {
         let mut output_token_ids = [self.config.pad_token_id as u32].to_vec();
         let mut logits_processor = LogitsProcessor::new(299792458, Some(0.8), None);
 
-        let model = self.model.get_mut();
+        let mut model = self.model.borrow_mut();
         let encoder_output = model.encode(&input_token_ids).unwrap();
 
         let start = std::time::Instant::now();
