@@ -1,0 +1,17 @@
+[package]
+name = "flux-ai"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+axum = "0.6.20"
+candle-core = "0.3.0"
+candle-nn = "0.3.0"
+candle-transformers = "0.3.0"
+dotenv = "0.15.0"
+hf-hub = "0.3.2"
+serde_json = "1.0.108"
+tokenizers = "0.14.1"
+tokio = { version = "1.33.0", features = ["full"] }
