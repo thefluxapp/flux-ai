@@ -1,0 +1,17 @@
+name = "flux-ai"
+
+[http]
+endpoint = "0.0.0.0:3000"
+
+[ollama]
+endpoint = "0.0.0.0:11434"
+
+[redis]
+endpoint = "redis://0.0.0.0:6379"
+
+[nats]
+endpoint = "0.0.0.0:4222"
+
+# [streams.messaging.update_streams]
+# consumer = "flux-ai"
+
