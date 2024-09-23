@@ -3,12 +3,15 @@ use std::env;
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 
+use super::{ollama::OllamaSettings, streams::settings::StreamsSettings};
+
 #[derive(Deserialize, Clone)]
 pub struct AppSettings {
-    pub name: String,
+    pub _name: String,
     pub http: HttpSettings,
     pub ollama: OllamaSettings,
     pub nats: NATSSettings,
+    pub streams: StreamsSettings,
 }
 
 #[derive(Deserialize, Clone)]
@@ -18,11 +21,6 @@ pub struct HttpSettings {
 
 #[derive(Deserialize, Clone)]
 pub struct NATSSettings {
-    pub endpoint: String,
-}
-
-#[derive(Deserialize, Clone)]
-pub struct OllamaSettings {
     pub endpoint: String,
 }
 

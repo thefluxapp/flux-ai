@@ -1,10 +1,11 @@
-name = "flux-ai"
+_name = "flux-ai"
 
 [http]
 endpoint = "0.0.0.0:3000"
 
 [ollama]
-endpoint = "0.0.0.0:11434"
+endpoint = "http://0.0.0.0:11434"
+instruction = "Суммаризируй диалог в 20 слов используя имена:\n"
 
 [redis]
 endpoint = "redis://0.0.0.0:6379"
@@ -12,6 +13,20 @@ endpoint = "redis://0.0.0.0:6379"
 [nats]
 endpoint = "0.0.0.0:4222"
 
-# [streams.messaging.update_streams]
-# consumer = "flux-ai"
+[streams.messaging]
+name = "flux"
+subject = "flux.streams.summarize.request"
+consumer = "flux-ai"
+
+[streams.messaging.subjects]
+request = "flux.streams.summarize.request"
+response = "flux.streams.summarize.response"
+
+
+[streams.kv]
+name = "stream-summarize-queue"
+
+[streams.execution]
+period_ms = 5_000
+batch_size = 2
 

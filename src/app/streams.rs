@@ -1,33 +1,39 @@
 use anyhow::Error;
 use async_nats::jetstream::consumer::pull::Config;
-use axum::{routing::get, Router};
 
 use super::state::AppState;
 
-mod http;
+mod execution;
 mod messaging;
 mod service;
-
-pub fn router() -> Router<AppState> {
-    Router::new().route("/", get(http::send_example_message))
-}
+pub(crate) mod settings;
 
 pub async fn messaging(state: &AppState) -> Result<(), Error> {
-    let AppState { jetstream, .. } = state;
+    let AppState { js, settings, .. } = state;
 
-    let consumer = jetstream
+    let consumer = js
         .create_consumer_on_stream(
             Config {
-                durable_name: Some(state.settings.name.clone()),
+                durable_name: Some(settings.streams.messaging.consumer.clone()),
+                filter_subject: settings.streams.messaging.subjects.request.clone(),
                 ..Default::default()
             },
-            "foo",
+            settings.streams.messaging.name.clone(),
         )
         .await?;
 
     // Консюмер молча падает в момент иниализации , а приложка грузится дальше,
     // нужно найти способ пропагейтить ошибку в main тред чтобы приложка не поднималась
-    tokio::spawn(messaging::update_streams_consumer(state.clone(), consumer.clone()));
+    tokio::spawn(messaging::update_streams_consumer(
+        state.clone(),
+        consumer.clone(),
+    ));
+
+    Ok(())
+}
+
+pub async fn execution(state: &AppState) -> Result<(), Error> {
+    tokio::spawn(execution::summarize_streams_execution(state.clone()));
 
     Ok(())
 }

@@ -5,7 +5,7 @@ use futures_lite::StreamExt as _;
 
 use crate::app::{
     state::AppState,
-    streams::service::{self, Stream},
+    streams::service::{self, SummarizeStreamRequest},
 };
 
 pub async fn update_streams_consumer(state: AppState, consumer: PullConsumer) -> Result<(), Error> {
@@ -17,8 +17,6 @@ pub async fn update_streams_consumer(state: AppState, consumer: PullConsumer) ->
 }
 
 async fn update_streams(state: &AppState, consumer: &PullConsumer) -> Result<(), Error> {
-    println!("SUB");
-
     let messages = consumer.messages().await?;
     tokio::pin!(messages);
 
@@ -26,11 +24,11 @@ async fn update_streams(state: &AppState, consumer: &PullConsumer) -> Result<(),
         let event: Event = serde_json::from_slice(&message.payload)?;
 
         if let Some(Data::Json(data)) = event.data() {
-            let stream: Stream = serde_json::from_value(data.to_owned())?;
+            let request: SummarizeStreamRequest = serde_json::from_value(data.to_owned())?;
 
-            match service::update_streams(state, stream).await {
+            match service::update_stream(state, request).await {
                 Ok(()) => message.ack().await.map_err(Error::msg)?,
-                Err(e) => println!("Error: {}", e),
+                Err(e) => println!("ErroR: {}", e),
             };
         }
     }
