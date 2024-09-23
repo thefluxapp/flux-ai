@@ -15,13 +15,11 @@ endpoint = "0.0.0.0:4222"
 
 [streams.messaging]
 name = "flux"
-subject = "flux.streams.summarize.request"
 consumer = "flux-ai"
 
 [streams.messaging.subjects]
 request = "flux.streams.summarize.request"
 response = "flux.streams.summarize.response"
-
 
 [streams.kv]
 name = "stream-summarize-queue"
