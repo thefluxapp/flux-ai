@@ -24,7 +24,7 @@ pub async fn messaging(state: &AppState) -> Result<(), Error> {
 
     // Консюмер молча падает в момент иниализации , а приложка грузится дальше,
     // нужно найти способ пропагейтить ошибку в main тред чтобы приложка не поднималась
-    tokio::spawn(messaging::update_streams_consumer(
+    tokio::spawn(messaging::summarize_stream_consumer(
         state.clone(),
         consumer.clone(),
     ));

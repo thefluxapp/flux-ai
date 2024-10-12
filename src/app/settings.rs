@@ -12,6 +12,7 @@ pub struct AppSettings {
     pub ollama: OllamaSettings,
     pub nats: NATSSettings,
     pub streams: StreamsSettings,
+    pub clients: ClientsSettings,
 }
 
 #[derive(Deserialize, Clone)]
@@ -21,6 +22,17 @@ pub struct HttpSettings {
 
 #[derive(Deserialize, Clone)]
 pub struct NATSSettings {
+    pub endpoint: String,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct ClientsSettings {
+    pub flux_auth: ClientSettings,
+    pub flux_core: ClientSettings,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct ClientSettings {
     pub endpoint: String,
 }
 

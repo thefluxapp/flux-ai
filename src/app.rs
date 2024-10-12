@@ -3,7 +3,6 @@ use async_nats::jetstream;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
     Router,
 };
 
@@ -11,6 +10,7 @@ use settings::AppSettings;
 use state::AppState;
 use tonic::service::Routes;
 
+mod clients;
 mod ollama;
 mod settings;
 mod state;
@@ -36,11 +36,7 @@ async fn http_and_grpc(state: &AppState) -> Result<(), Error> {
     let (_, health_service) = tonic_health::server::health_reporter();
 
     let router = Router::new()
-        .nest(
-            "/api",
-            Router::new()
-                .route("/healthz", get(|| async {})),
-        )
+        // .nest("/api", Router::new().route("/healthz", get(|| async {})))
         .with_state(state.to_owned());
 
     let routes: Routes = router.to_owned().into();

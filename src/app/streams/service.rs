@@ -1,23 +1,30 @@
-use anyhow::Error;
-use async_nats::jetstream;
-use chrono::{DateTime, Utc};
-use cloudevents::{Event, EventBuilder, EventBuilderV10};
-use futures_lite::StreamExt;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tokio::task::JoinSet;
-use uuid::Uuid;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::app::{ollama::OllamaClient, settings::AppSettings, state::AppState, AppJS};
+use anyhow::{anyhow, Error};
+use async_nats::jetstream::kv::{Operation, Store};
+use bytes::BytesMut;
+use flux_auth_api::{users_service_client::UsersServiceClient, GetUsersRequest};
+use flux_core_api::{
+    messages_service_client::MessagesServiceClient, GetMessagesRequest, SummarizeStreamResponse,
+};
+use futures_lite::StreamExt;
+use prost::Message;
+use summarize_stream::SummarizeStreamRequest;
+use tokio::task::JoinSet;
+use tonic::transport::Channel;
+
+use crate::app::{clients::AppClients, ollama::OllamaClient, AppJS};
+
+use super::settings::StreamsSettings;
 
 pub async fn summarize_streams(
-    js: &AppJS,
-    settings: &AppSettings,
-    ollama: &OllamaClient,
+    kv: Store,
+    js: Arc<AppJS>,
+    settings: StreamsSettings,
+    clients: Arc<AppClients>,
+    ollama: Arc<OllamaClient>,
 ) -> Result<(), Error> {
-    let kv = js.get_key_value(&settings.streams.kv.name).await?;
-
-    let keys = kv.keys().await?.take(settings.streams.execution.batch_size);
+    let keys = kv.keys().await?.take(settings.execution.batch_size);
     tokio::pin!(keys);
 
     let mut join_set = JoinSet::new();
@@ -25,18 +32,21 @@ pub async fn summarize_streams(
     while let Some(key) = keys.next().await {
         match kv.entry(&key?).await? {
             Some(entry) => {
-                let request: SummarizeStreamRequest = serde_json::from_slice(&entry.value)?;
+                if entry.operation == Operation::Put {
+                    let request: SummarizeStreamRequest = serde_json::from_slice(&entry.value)?;
 
-                join_set.spawn(summarize_stream(
-                    js.clone(),
-                    settings.clone(),
-                    ollama.clone(),
-                    request,
-                    kv.clone(),
-                ));
+                    join_set.spawn(summarize_streams_process(
+                        kv.clone(),
+                        js.clone(),
+                        settings.clone(),
+                        clients.clone(),
+                        ollama.clone(),
+                        request,
+                    ));
+                }
             }
             None => {}
-        };
+        }
     }
 
     join_set.join_all().await;
@@ -44,64 +54,44 @@ pub async fn summarize_streams(
     Ok(())
 }
 
-async fn summarize_stream(
-    js: AppJS,
-    settings: AppSettings,
-    ollama: OllamaClient,
-    stream: SummarizeStreamRequest,
-    kv: jetstream::kv::Store,
+async fn summarize_streams_process(
+    kv: Store,
+    js: Arc<AppJS>,
+    settings: StreamsSettings,
+    clients: Arc<AppClients>,
+    ollama: Arc<OllamaClient>,
+    request: SummarizeStreamRequest,
 ) -> Result<(), Error> {
-    let event: Event = SummarizeStreamResponse {
-        id: stream.id,
-        text: ollama.summarize(stream.prompt).await?,
-    }
-    .try_into()?;
+    let key = request.stream_id.clone();
 
-    let key = stream.id.to_string();
+    let AppClients {
+        users_service_client,
+        messages_service_client,
+        ..
+    } = clients.as_ref();
+
+    let prompt =
+        summarize_streams_collect(&request, users_service_client, messages_service_client).await?;
+
+    let response = SummarizeStreamResponse {
+        stream_id: Some(request.stream_id),
+        text: Some(ollama.summarize(prompt).await?),
+        version: Some(request.version),
+    };
+
+    let mut buf = BytesMut::new();
+    response.encode(&mut buf)?;
 
     if let Some(entry) = kv.entry(&key).await? {
-        let prev: SummarizeStreamRequest = serde_json::from_slice(&entry.value)?;
-
-        if prev.updated_at >= stream.updated_at {
-            kv.delete_expect_revision(&key, Some(entry.revision))
-                .await?;
-
-            js.publish(
-                settings.streams.messaging.subjects.response,
-                serde_json::to_vec(&event)?.try_into()?,
-            )
-            .await?;
-        }
-    };
-
-    Ok(())
-}
-
-pub async fn update_stream(state: &AppState, stream: SummarizeStreamRequest) -> Result<(), Error> {
-    let AppState { js, settings, .. } = state;
-
-    let kv = js.get_key_value(&settings.streams.kv.name).await?;
-    let key = stream.id.to_string();
-
-    match kv.entry(&key).await? {
-        Some(entry) => {
+        if entry.operation == Operation::Put {
             let prev: SummarizeStreamRequest = serde_json::from_slice(&entry.value)?;
 
-            if prev.updated_at < stream.updated_at {
-                while let Err(_) = kv
-                    .update(&key, serde_json::to_vec(&stream)?.into(), entry.revision)
-                    .await
-                {
-                    println!("Can't UPDATE new KV");
-                }
-            }
-        }
-        None => {
-            while let Err(_) = kv
-                .update(&key, serde_json::to_vec(&stream)?.into(), 0)
-                .await
-            {
-                println!("Can't create new KV");
+            if prev.version <= request.version {
+                kv.delete_expect_revision(&key, Some(entry.revision))
+                    .await?;
+
+                js.publish(settings.messaging.subjects.response, buf.into())
+                    .await?;
             }
         }
     };
@@ -109,29 +99,111 @@ pub async fn update_stream(state: &AppState, stream: SummarizeStreamRequest) -> 
     Ok(())
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct SummarizeStreamRequest {
-    pub id: Uuid,
-    pub updated_at: DateTime<Utc>,
-    pub prompt: Vec<String>,
+async fn summarize_streams_collect(
+    request: &SummarizeStreamRequest,
+    users_service_client: &UsersServiceClient<Channel>,
+    messages_service_client: &MessagesServiceClient<Channel>,
+) -> Result<Vec<String>, Error> {
+    let messages: HashMap<String, String> = messages_service_client
+        .to_owned()
+        .get_messages(GetMessagesRequest {
+            message_ids: request
+                .messages
+                .iter()
+                .map(|m| m.message_id.clone())
+                .collect(),
+        })
+        .await?
+        .into_inner()
+        .messages
+        .iter()
+        .map(|v| (v.message_id().into(), v.text().into()))
+        .collect();
+
+    let users: HashMap<String, String> = users_service_client
+        .to_owned()
+        .get_users(GetUsersRequest {
+            user_ids: request.messages.iter().map(|m| m.user_id.clone()).collect(),
+        })
+        .await?
+        .into_inner()
+        .users
+        .iter()
+        .map(|v| (v.user_id().into(), v.first_name().into()))
+        .collect();
+
+    let prompt = request
+        .messages
+        .iter()
+        .map(|m| -> Result<String, Error> {
+            let user = users
+                .get(m.user_id.as_str())
+                .ok_or(anyhow!("message not found"))?;
+            let text = messages
+                .get(m.message_id.as_str())
+                .ok_or(anyhow!("user nort found"))?;
+
+            Ok(user.to_owned() + ": " + text)
+        })
+        .collect::<Result<Vec<String>, Error>>()?;
+
+    Ok(prompt)
 }
 
-#[derive(Serialize)]
-struct SummarizeStreamResponse {
-    pub id: Uuid,
-    pub text: String,
+pub async fn summarize_stream(
+    kv: Store,
+    request: summarize_stream::SummarizeStreamRequest,
+) -> Result<(), Error> {
+    let key = request.stream_id.clone();
+
+    while let Err(_) = summarize_stream_process(&kv, key.clone(), &request).await {
+        println!("QQQ");
+    }
+
+    Ok(())
 }
 
-impl TryFrom<SummarizeStreamResponse> for Event {
-    type Error = Error;
+async fn summarize_stream_process(
+    kv: &Store,
+    key: String,
+    request: &SummarizeStreamRequest,
+) -> Result<(), Error> {
+    let entry = kv.entry(&key).await?;
 
-    fn try_from(response: SummarizeStreamResponse) -> Result<Self, Self::Error> {
-        let builder = EventBuilderV10::new()
-            .id(Uuid::now_v7().to_string())
-            .ty("ty")
-            .data("application/json", json!(response))
-            .source("source");
+    let rev = match entry {
+        Some(ref e) => {
+            if e.operation == Operation::Put {
+                let prev: SummarizeStreamRequest = serde_json::from_slice(&e.value)?;
 
-        Ok(builder.build()?)
+                if prev.version > request.version {
+                    return Ok(());
+                }
+            }
+
+            e.revision
+        }
+        None => 0,
+    };
+
+    kv.update(&key, serde_json::to_vec(&request)?.into(), rev)
+        .await?;
+
+    Ok(())
+}
+
+pub mod summarize_stream {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Deserialize, Serialize, Debug)]
+    pub struct SummarizeStreamRequest {
+        pub stream_id: String,
+        pub version: i64,
+        pub messages: Vec<Message>,
+    }
+
+    #[derive(Deserialize, Serialize, Debug)]
+    pub struct Message {
+        pub message_id: String,
+        pub user_id: String,
     }
 }

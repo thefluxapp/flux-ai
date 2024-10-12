@@ -22,9 +22,14 @@ request = "flux.streams.summarize.request"
 response = "flux.streams.summarize.response"
 
 [streams.kv]
-name = "stream-summarize-queue"
+name = "streams-summarize-queue"
 
 [streams.execution]
 period_ms = 5_000
 batch_size = 2
 
+# [clients.flux_auth]
+# endpoint = "http://0.0.0.0:3000"
+
+# [clients.flux_core]
+# endpoint = "http://0.0.0.0:3000"
