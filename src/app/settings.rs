@@ -1,6 +1,7 @@
 use std::env;
 
 use config::{Config, ConfigError, Environment, File};
+use flux_lib::settings::NATSSettings;
 use serde::Deserialize;
 
 use super::{ollama::OllamaSettings, streams::settings::StreamsSettings};
@@ -21,14 +22,9 @@ pub struct HttpSettings {
 }
 
 #[derive(Deserialize, Clone)]
-pub struct NATSSettings {
-    pub endpoint: String,
-}
-
-#[derive(Deserialize, Clone)]
 pub struct ClientsSettings {
-    pub flux_auth: ClientSettings,
-    pub flux_core: ClientSettings,
+    pub flux_users: ClientSettings,
+    pub flux_messages: ClientSettings,
 }
 
 #[derive(Deserialize, Clone)]

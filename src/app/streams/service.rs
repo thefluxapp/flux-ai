@@ -1,47 +1,77 @@
-use std::{collections::HashMap, sync::Arc};
-
-use anyhow::{anyhow, Error};
-use async_nats::jetstream::kv::{Operation, Store};
-use bytes::BytesMut;
-use flux_auth_api::{users_service_client::UsersServiceClient, GetUsersRequest};
-use flux_core_api::{
-    messages_service_client::MessagesServiceClient, GetMessagesRequest, SummarizeStreamResponse,
-};
+use async_nats::jetstream::kv::Operation;
 use futures_lite::StreamExt;
-use prost::Message;
-use summarize_stream::SummarizeStreamRequest;
 use tokio::task::JoinSet;
-use tonic::transport::Channel;
 
-use crate::app::{clients::AppClients, ollama::OllamaClient, AppJS};
+use crate::app::{error::AppError, state::AppState};
 
-use super::settings::StreamsSettings;
+pub async fn message(state: AppState, req: message::Request) -> Result<(), AppError> {
+    let kv = state.streams.kv.clone();
 
-pub async fn summarize_streams(
-    kv: Store,
-    js: Arc<AppJS>,
-    settings: StreamsSettings,
-    clients: Arc<AppClients>,
-    ollama: Arc<OllamaClient>,
-) -> Result<(), Error> {
-    let keys = kv.keys().await?.take(settings.execution.batch_size);
-    tokio::pin!(keys);
+    let Some(key) = req.message_id else {
+        return Ok(());
+    };
 
+    let entry = kv.entry(&key).await?;
+
+    let revision = match entry {
+        Some(entry) => {
+            if entry.operation == Operation::Put {
+                let version = i64::from_ne_bytes(
+                    entry
+                        .value
+                        .as_ref()
+                        .try_into()
+                        .map_err(|_| AppError::Other)?,
+                );
+
+                if version >= req.version {
+                    return Ok(());
+                }
+            }
+
+            entry.revision
+        }
+        None => 0,
+    };
+
+    kv.update(&key, req.version.to_ne_bytes().to_vec().into(), revision)
+        .await?;
+
+    Ok(())
+}
+
+pub mod message {
+    pub struct Request {
+        pub message_id: Option<String>,
+        pub version: i64,
+    }
+}
+
+pub async fn summarize(state: AppState) -> Result<(), AppError> {
+    let AppState { settings, .. } = state.clone();
+
+    let kv = state.streams.kv.clone();
+    let keys = kv.keys().await?.take(settings.streams.execution.batch_cnt);
     let mut join_set = JoinSet::new();
+
+    tokio::pin!(keys);
 
     while let Some(key) = keys.next().await {
         match kv.entry(&key?).await? {
             Some(entry) => {
                 if entry.operation == Operation::Put {
-                    let request: SummarizeStreamRequest = serde_json::from_slice(&entry.value)?;
-
-                    join_set.spawn(summarize_streams_process(
-                        kv.clone(),
-                        js.clone(),
-                        settings.clone(),
-                        clients.clone(),
-                        ollama.clone(),
-                        request,
+                    join_set.spawn(summarize::process(
+                        state.clone(),
+                        summarize::Request {
+                            message_id: entry.key,
+                            version: i64::from_ne_bytes(
+                                entry
+                                    .value
+                                    .as_ref()
+                                    .try_into()
+                                    .map_err(|_| AppError::Other)?,
+                            ),
+                        },
                     ));
                 }
             }
@@ -54,141 +84,144 @@ pub async fn summarize_streams(
     Ok(())
 }
 
-async fn summarize_streams_process(
-    kv: Store,
-    js: Arc<AppJS>,
-    settings: StreamsSettings,
-    clients: Arc<AppClients>,
-    ollama: Arc<OllamaClient>,
-    request: SummarizeStreamRequest,
-) -> Result<(), Error> {
-    let key = request.stream_id.clone();
+mod summarize {
+    use std::collections::HashMap;
 
-    let AppClients {
-        users_service_client,
-        messages_service_client,
-        ..
-    } = clients.as_ref();
+    use async_nats::jetstream::kv::Operation;
+    use bytes::BytesMut;
+    use chrono::{DateTime, Utc};
+    use flux_messages_api::{get_message_response, GetMessageRequest};
+    use flux_users_api::{get_users_response, GetUsersRequest};
+    use prost::Message as _;
 
-    let prompt =
-        summarize_streams_collect(&request, users_service_client, messages_service_client).await?;
+    use crate::app::{error::AppError, state::AppState};
 
-    let response = SummarizeStreamResponse {
-        stream_id: Some(request.stream_id),
-        text: Some(ollama.summarize(prompt).await?),
-        version: Some(request.version),
-    };
-
-    let mut buf = BytesMut::new();
-    response.encode(&mut buf)?;
-
-    if let Some(entry) = kv.entry(&key).await? {
-        if entry.operation == Operation::Put {
-            let prev: SummarizeStreamRequest = serde_json::from_slice(&entry.value)?;
-
-            if prev.version <= request.version {
-                kv.delete_expect_revision(&key, Some(entry.revision))
-                    .await?;
-
-                js.publish(settings.messaging.subjects.response, buf.into())
-                    .await?;
-            }
-        }
-    };
-
-    Ok(())
-}
-
-async fn summarize_streams_collect(
-    request: &SummarizeStreamRequest,
-    users_service_client: &UsersServiceClient<Channel>,
-    messages_service_client: &MessagesServiceClient<Channel>,
-) -> Result<Vec<String>, Error> {
-    let messages: HashMap<String, String> = messages_service_client
-        .to_owned()
-        .get_messages(GetMessagesRequest {
-            message_ids: request
-                .messages
-                .iter()
-                .map(|m| m.message_id.clone())
-                .collect(),
-        })
-        .await?
-        .into_inner()
-        .messages
-        .iter()
-        .map(|v| (v.message_id().into(), v.text().into()))
-        .collect();
-
-    let users: HashMap<String, String> = users_service_client
-        .to_owned()
-        .get_users(GetUsersRequest {
-            user_ids: request.messages.iter().map(|m| m.user_id.clone()).collect(),
-        })
-        .await?
-        .into_inner()
-        .users
-        .iter()
-        .map(|v| (v.user_id().into(), v.first_name().into()))
-        .collect();
-
-    let prompt = request
-        .messages
-        .iter()
-        .map(|m| -> Result<String, Error> {
-            let user = users
-                .get(m.user_id.as_str())
-                .ok_or(anyhow!("message not found"))?;
-            let text = messages
-                .get(m.message_id.as_str())
-                .ok_or(anyhow!("user nort found"))?;
-
-            Ok(user.to_owned() + ": " + text)
-        })
-        .collect::<Result<Vec<String>, Error>>()?;
-
-    Ok(prompt)
-}
-
-pub async fn summarize_stream(
-    kv: Store,
-    request: summarize_stream::SummarizeStreamRequest,
-) -> Result<(), Error> {
-    let key = request.stream_id.clone();
-
-    while let Err(_) = summarize_stream_process(&kv, key.clone(), &request).await {
-        println!("QQQ");
+    #[derive(Debug)]
+    pub struct Request {
+        pub message_id: String,
+        pub version: i64,
     }
 
-    Ok(())
-}
+    pub struct Response {
+        pub message_id: String,
+        pub text: String,
+        pub version: i64,
+    }
 
-async fn summarize_stream_process(
-    kv: &Store,
-    key: String,
-    request: &SummarizeStreamRequest,
-) -> Result<(), Error> {
-    let entry = kv.entry(&key).await?;
+    // TBD: maybe split this code?
+    pub async fn process(state: AppState, req: Request) -> Result<(), AppError> {
+        let AppState {
+            clients,
+            settings,
+            ollama,
+            js,
+            ..
+        } = state.clone();
 
-    let rev = match entry {
-        Some(ref e) => {
-            if e.operation == Operation::Put {
-                let prev: SummarizeStreamRequest = serde_json::from_slice(&e.value)?;
+        let kv = state.streams.kv.clone();
+        let key = &req.message_id.clone();
 
-                if prev.version > request.version {
-                    return Ok(());
+        let messages: Vec<get_message_response::Message> = clients
+            .messages_service_client
+            .clone()
+            .get_message(GetMessageRequest {
+                message_id: Some(req.message_id.clone()),
+                cursor_message_id: None,
+                limit: Some(settings.streams.limit_cnt),
+            })
+            .await?
+            .into_inner()
+            .messages
+            .into_iter()
+            .map(|message| message)
+            .collect();
+
+        let mut user_ids: Vec<String> = messages.iter().map(|m| m.user_id().into()).collect();
+
+        user_ids.dedup();
+
+        let users: HashMap<String, get_users_response::User> = clients
+            .users_service_client
+            .clone()
+            .get_users(GetUsersRequest { user_ids })
+            .await?
+            .into_inner()
+            .users
+            .into_iter()
+            .map(|user| (user.user_id().into(), user))
+            .collect();
+
+        let prompt: Vec<String> = messages
+            .iter()
+            .filter_map(|message| prompt(message, users.get(message.user_id())).ok())
+            .collect();
+
+        let text = ollama.summarize(prompt.join("---\n\n")).await?;
+
+        let mut buf = BytesMut::new();
+        Into::<flux_ai_api::Stream>::into(Response {
+            text,
+            version: req.version,
+            message_id: req.message_id,
+        })
+        .encode(&mut buf)?;
+
+        if let Some(entry) = kv.entry(key).await? {
+            if entry.operation == Operation::Put {
+                let version = i64::from_ne_bytes(
+                    entry
+                        .value
+                        .as_ref()
+                        .try_into()
+                        .map_err(|_| AppError::Other)?,
+                );
+
+                if version <= req.version {
+                    kv.delete_expect_revision(key, Some(entry.revision)).await?;
+
+                    js.publish(settings.streams.messaging.stream.subject, buf.into())
+                        .await?;
                 }
             }
+        };
 
-            e.revision
+        Ok(())
+    }
+
+    fn prompt(
+        message: &get_message_response::Message,
+        user: Option<&get_users_response::User>,
+    ) -> Result<String, AppError> {
+        let user = user.ok_or(AppError::NoEntity)?;
+        let timestamp = message
+            .created_at
+            .map(|ts| -> Result<DateTime<Utc>, AppError> {
+                Ok(DateTime::from_timestamp(ts.seconds, 0).ok_or(AppError::Other)?)
+            })
+            .ok_or(AppError::NoEntity)??;
+
+        // TBD: escape template characters in the text
+        let prompt = format!(
+            "[timestamp={timestamp}] [id={id}] [first_name={first_name}] [last_name={last_name}]:\n{text}\n",
+            timestamp = timestamp,
+            id = user.user_id(),
+            first_name = user.first_name(),
+            last_name = user.last_name(),
+            text = message.text(),
+        );
+
+        Ok(prompt)
+    }
+
+    impl From<Response> for flux_ai_api::Stream {
+        fn from(res: Response) -> Self {
+            Self {
+                message_id: Some(res.message_id),
+                text: Some(res.text),
+                version: Some(res.version),
+            }
         }
-        None => 0,
-    };
-
-    kv.update(&key, serde_json::to_vec(&request)?.into(), rev)
-        .await?;
-
-    Ok(())
+    }
 }
 
 pub mod summarize_stream {

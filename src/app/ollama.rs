@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Error;
+use flux_lib::error::Error;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
@@ -16,10 +16,11 @@ impl OllamaClient {
         Self { client, settings }
     }
 
-    pub async fn summarize(&self, prompt: Vec<String>) -> Result<String, Error> {
+    pub async fn summarize(&self, prompt: String) -> Result<String, Error> {
         let endpoint = [self.settings.endpoint.clone(), "/api/generate".into()].concat();
-        let req =
-            OllamaRequest::new([self.settings.instruction.clone(), prompt.join("\n")].concat());
+        let req = OllamaRequest::new([self.settings.instruction.clone(), prompt].concat());
+
+        dbg!(&req);
 
         let res = self
             .client
@@ -40,7 +41,7 @@ pub struct OllamaSettings {
     pub instruction: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct OllamaRequest {
     pub model: OllamaModel,
     pub stream: bool,
@@ -51,21 +52,23 @@ struct OllamaRequest {
 impl OllamaRequest {
     pub fn new(prompt: String) -> Self {
         Self {
-            model: OllamaModel::GEMMA2_2B,
+            model: OllamaModel::GEMMA3_4B,
             prompt,
             stream: false,
-            options: OllamaOptions { temperature: 0.4 },
+            options: OllamaOptions { temperature: 0.3 },
         }
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 enum OllamaModel {
-    #[serde(rename = "gemma2:2b")]
-    GEMMA2_2B,
+    // #[serde(rename = "gemma2:2b")]
+    // GEMMA2_2B,
+    #[serde(rename = "gemma3:4b")]
+    GEMMA3_4B,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct OllamaOptions {
     pub temperature: f32,
 }

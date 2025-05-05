@@ -1,20 +1,20 @@
-use anyhow::Error;
 use async_nats::jetstream;
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    Router,
-};
+use axum::Router;
 
+use flux_lib::error::Error;
 use settings::AppSettings;
 use state::AppState;
+
 use tonic::service::Routes;
+use tracing::info;
 
 mod clients;
+mod error;
 mod ollama;
 mod settings;
 mod state;
 mod streams;
+mod utils;
 
 pub async fn run() -> Result<(), Error> {
     let settings = AppSettings::new()?;
@@ -35,9 +35,7 @@ async fn http_and_grpc(state: &AppState) -> Result<(), Error> {
 
     let (_, health_service) = tonic_health::server::health_reporter();
 
-    let router = Router::new()
-        // .nest("/api", Router::new().route("/healthz", get(|| async {})))
-        .with_state(state.to_owned());
+    let router = Router::new().with_state(state.to_owned());
 
     let routes: Routes = router.to_owned().into();
     let router = routes
@@ -47,42 +45,26 @@ async fn http_and_grpc(state: &AppState) -> Result<(), Error> {
 
     let listener = tokio::net::TcpListener::bind(&state.settings.http.endpoint).await?;
 
+    info!("app: started on {}", listener.local_addr()?);
     axum::serve(listener, router).await?;
 
     Ok(())
 }
 
 async fn messaging(state: &AppState) -> Result<(), Error> {
-    streams::messaging(&state).await?;
+    streams::messaging(&state);
+
+    info!("messaging: started");
 
     Ok(())
 }
 
 async fn execution(state: &AppState) -> Result<(), Error> {
-    streams::execution(state).await?;
+    streams::execution(state);
+
+    info!("execution: started");
 
     Ok(())
-}
-
-struct AppError(Error);
-
-impl<E> From<E> for AppError
-where
-    E: Into<Error>,
-{
-    fn from(err: E) -> Self {
-        Self(err.into())
-    }
-}
-
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        let status = match self {
-            _ => StatusCode::BAD_REQUEST,
-        };
-
-        (status, self.0.to_string()).into_response()
-    }
 }
 
 pub type AppJS = jetstream::Context;

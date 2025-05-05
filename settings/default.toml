@@ -5,28 +5,56 @@ endpoint = "0.0.0.0:3000"
 
 [ollama]
 endpoint = "http://0.0.0.0:11434"
-instruction = "Суммаризируй диалог в 20 слов используя имена:\n"
+instruction = """\
+Используй менее деловой стиль, старайся сделать его неформальным, живым.
+Суммаризируй приведённый ниже диалог в одном предложении из 30 слов.
+Учитывай время сообщений, только если это влияет на смысл (например, задержки, срочность, хронология).
+Используй first_name и last_name, только если это важно для понимания.
+Если у двух реплик одинаковые first_name и last_name, различай участников строго по id в квадратных скобках. Не объединяй таких участников в одном лице.
+Формат диалога: реплика от одного человека заканчивается ---.
+Пример: [timestamp=...] [id=...] [first_name=...] [last_name=...]: текст ---
 
-[redis]
-endpoint = "redis://0.0.0.0:6379"
+"""
+
+# " "
+
+# [redis]
+# endpoint = "redis://0.0.0.0:6379"
 
 [nats]
 endpoint = "0.0.0.0:4222"
+stream = "flux"
 
-[streams.messaging]
-name = "flux"
-consumer = "flux-ai"
+[clients.flux_users]
+# endpoint = "http://0.0.0.0:3000"
 
-[streams.messaging.subjects]
-request = "flux.streams.summarize.request"
-response = "flux.streams.summarize.response"
+[clients.flux_messages]
+# endpoint = "http://0.0.0.0:3000"
+
+# [streams.messaging]
+# name = "flux"
+# consumer = "flux-ai"
+
+# [streams.messaging.subjects]
+# request = "flux.streams.summarize.request"
+# response = "flux.streams.summarize.response"
+
+[streams]
+limit_cnt = 100
+
+[streams.messaging.message]
+subjects = ["flux.messages.message"]
+consumer = "flux-ai-streams"
+
+[streams.messaging.stream]
+subject = "flux.ai.stream"
 
 [streams.kv]
-name = "streams-summarize-queue"
+name = "flux-ai-streams-summarize-queue"
 
 [streams.execution]
-period_ms = 5_000
-batch_size = 2
+interval_ms = 10_000
+batch_cnt = 2
 
 # [clients.flux_auth]
 # endpoint = "http://0.0.0.0:3000"

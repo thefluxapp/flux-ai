@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
-use anyhow::Error;
 use async_nats::jetstream;
+use flux_lib::error::Error;
 
-use super::{clients::AppClients, ollama::OllamaClient, settings::AppSettings, AppJS};
+use super::{
+    clients::AppClients, ollama::OllamaClient, settings::AppSettings, streams::state::StreamsState,
+    AppJS,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -11,6 +14,7 @@ pub struct AppState {
     pub js: Arc<AppJS>,
     pub ollama: Arc<OllamaClient>,
     pub clients: Arc<AppClients>,
+    pub streams: StreamsState,
 }
 
 impl AppState {
@@ -19,12 +23,14 @@ impl AppState {
         let js = Arc::new(jetstream::new(nats));
         let ollama = Arc::new(OllamaClient::new(settings.ollama.clone()));
         let clients = Arc::new(AppClients::new(settings.clients.clone()).await?);
+        let streams = StreamsState::new(&js, &settings.streams).await?;
 
         Ok(Self {
             settings,
             js,
             ollama,
             clients,
+            streams,
         })
     }
 }

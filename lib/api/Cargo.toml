@@ -1,0 +1,13 @@
+[package]
+name = "flux-ai-api"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tonic-build = "0.13.0"
+
+[dependencies]
+prost = "0.13.5"
+prost-types = "0.13.5"
+tonic = "0.13.0"
