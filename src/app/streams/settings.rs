@@ -18,9 +18,6 @@ pub struct ExecutionSettings {
 pub struct MessagingSettings {
     pub message: MessagingMessageSettings,
     pub stream: MessagingStreamSettings,
-    // pub name: String,
-    // pub consumer: String,
-    // pub subjects: MessagingSubjectsSettings,
 }
 
 #[derive(Deserialize, Clone)]
@@ -28,12 +25,6 @@ pub struct MessagingMessageSettings {
     pub subjects: Vec<String>,
     pub consumer: String,
 }
-
-// #[derive(Deserialize, Clone)]
-// pub struct MessagingSubjectsSettings {
-//     pub request: String,
-//     pub response: String,
-// }
 
 #[derive(Deserialize, Clone)]
 pub struct MessagingStreamSettings {
