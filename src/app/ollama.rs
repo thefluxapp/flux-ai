@@ -20,8 +20,6 @@ impl OllamaClient {
         let endpoint = [self.settings.endpoint.clone(), "/api/generate".into()].concat();
         let req = OllamaRequest::new([self.settings.instruction.clone(), prompt].concat());
 
-        dbg!(&req);
-
         let res = self
             .client
             .post(endpoint)
