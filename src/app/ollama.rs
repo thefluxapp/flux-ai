@@ -18,7 +18,10 @@ impl OllamaClient {
 
     pub async fn summarize(&self, prompt: String) -> Result<String, Error> {
         let endpoint = [self.settings.endpoint.clone(), "/api/generate".into()].concat();
-        let req = OllamaRequest::new([self.settings.instruction.clone(), prompt].concat());
+        let req = OllamaRequest::new(
+            self.settings.model.clone(),
+            [self.settings.instruction.clone(), prompt].concat(),
+        );
 
         let res = self
             .client
@@ -37,6 +40,7 @@ impl OllamaClient {
 pub struct OllamaSettings {
     pub endpoint: String,
     pub instruction: String,
+    pub model: OllamaModel,
 }
 
 #[derive(Serialize, Debug)]
@@ -48,9 +52,9 @@ struct OllamaRequest {
 }
 
 impl OllamaRequest {
-    pub fn new(prompt: String) -> Self {
+    pub fn new(model: OllamaModel, prompt: String) -> Self {
         Self {
-            model: OllamaModel::GEMMA3_4B,
+            model,
             prompt,
             stream: false,
             options: OllamaOptions { temperature: 0.3 },
@@ -58,12 +62,14 @@ impl OllamaRequest {
     }
 }
 
-#[derive(Serialize, Debug)]
-enum OllamaModel {
-    // #[serde(rename = "gemma2:2b")]
-    // GEMMA2_2B,
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum OllamaModel {
+    #[serde(rename = "gemma2:2b")]
+    Gemma3_2b,
     #[serde(rename = "gemma3:4b")]
-    GEMMA3_4B,
+    Gemma3_4b,
+    #[serde(rename = "gemma3:4b-it-qat")]
+    Gemma3_4bQat,
 }
 
 #[derive(Serialize, Debug)]
