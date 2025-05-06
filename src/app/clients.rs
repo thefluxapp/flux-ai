@@ -14,15 +14,27 @@ pub struct AppClients {
 impl AppClients {
     pub async fn new(settings: ClientsSettings) -> Result<Self, Error> {
         let users_service_client =
-            UsersServiceClient::connect(settings.flux_users.endpoint.clone()).await?;
+            Self::users_service_client(settings.flux_users.endpoint.clone()).await?;
 
         let messages_service_client =
-            MessagesServiceClient::connect(settings.flux_messages.endpoint.clone()).await?;
+            Self::messages_service_client(settings.flux_messages.endpoint.clone()).await?;
 
         Ok(Self {
             // settings,
             users_service_client,
             messages_service_client,
         })
+    }
+
+    async fn messages_service_client(dst: String) -> Result<MessagesServiceClient<Channel>, Error> {
+        let ch = tonic::transport::Endpoint::new(dst)?.connect_lazy();
+
+        Ok(MessagesServiceClient::new(ch))
+    }
+
+    async fn users_service_client(dst: String) -> Result<UsersServiceClient<Channel>, Error> {
+        let ch = tonic::transport::Endpoint::new(dst)?.connect_lazy();
+
+        Ok(UsersServiceClient::new(ch))
     }
 }
