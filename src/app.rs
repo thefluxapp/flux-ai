@@ -14,7 +14,6 @@ mod ollama;
 mod settings;
 mod state;
 mod streams;
-mod utils;
 
 pub async fn run() -> Result<(), Error> {
     let settings = AppSettings::new()?;
