@@ -9,7 +9,7 @@ resolver = "2"
 
 [dependencies]
 flux-ai-api = { path = "lib/api" }
-flux-users-api = { git = "https://github.com/thefluxapp/flux-users.git", branch = "dev" }
+flux-users-api = { git = "https://github.com/thefluxapp/flux-users.git" }
 flux-messages-api = { git = "https://github.com/thefluxapp/flux-messages.git", branch = "dev" }
 flux-lib = { git = "https://github.com/thefluxapp/flux-lib.git" }
 

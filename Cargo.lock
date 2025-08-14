@@ -505,7 +505,7 @@ dependencies = [
 [[package]]
 name = "flux-users-api"
 version = "0.1.0"
-source = "git+https://github.com/thefluxapp/flux-users.git?branch=dev#d9e57964bfe74ed88d19768f9d840fd955f1b1d7"
+source = "git+https://github.com/thefluxapp/flux-users.git#cba722e561ac9ec32b9b5af29ad204ddf1bd86fa"
 dependencies = [
  "prost",
  "tonic",
