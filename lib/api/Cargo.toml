@@ -5,9 +5,11 @@ edition = "2021"
 publish = false
 
 [build-dependencies]
-tonic-build = "0.13.1"
+tonic-prost-build = "0.14.1"
 
 [dependencies]
-prost = "0.13.5"
-prost-types = "0.13.5"
-tonic = "0.13.1"
+prost = "0.14.1"
+prost-types = "0.14.1"
+
+tonic = "0.14.1"
+tonic-prost = "0.14.1"
